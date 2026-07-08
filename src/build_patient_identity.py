@@ -227,15 +227,6 @@ def prepare_adresses(adresses, mapping_ipp):
 def prepare_opposition(opposition, mapping_ipp):
     opposition_avec_ipp = add_ipp_canonique(opposition, mapping_ipp, "ipp")
 
-    # Si la colonne opposition n'existe pas, on renvoie des valeurs nulles propres
-    if "opposition" not in opposition_avec_ipp.columns:
-        return opposition_avec_ipp.select(
-            "ipp_canonique",
-            F.lit(None).cast("boolean").alias("opposition_recherche"),
-            F.lit(None).alias("opposition_recherche_raw"),
-            F.lit(None).cast("date").alias("date_recueil_opposition"),
-        ).dropDuplicates(["ipp_canonique"])
-
     opposition_nettoyee = (
         opposition_avec_ipp
         .withColumn("opposition_recherche_raw", F.trim(F.col("opposition")))
@@ -262,31 +253,35 @@ def prepare_opposition(opposition, mapping_ipp):
         )
     )
 
-    if "date_recueil" in opposition_nettoyee.columns:
-        opposition_nettoyee = normalize_date(
-            opposition_nettoyee,
-            "date_recueil",
-            "date_recueil_opposition",
+    opposition_nettoyee = normalize_date(
+        opposition_nettoyee,
+        "date_recueil",
+        "date_recueil_opposition",
+    )
+
+    w = (
+        Window
+        .partitionBy("ipp_canonique")
+        .orderBy(
+            F.col("date_recueil_opposition").desc_nulls_last(),
+            (F.col("ipp") == F.col("ipp_canonique")).cast("int").desc(),
+            F.col("ipp").asc()
         )
-    else:
-        opposition_nettoyee = opposition_nettoyee.withColumn(
-            "date_recueil_opposition",
-            F.lit(None).cast("date"),
-        )
+    )
 
     opposition_finale = (
         opposition_nettoyee
+        .withColumn("rn", F.row_number().over(w))
+        .filter(F.col("rn") == 1)
         .select(
             "ipp_canonique",
             "opposition_recherche",
             "opposition_recherche_raw",
             "date_recueil_opposition",
         )
-        .dropDuplicates(["ipp_canonique"])
     )
 
     return opposition_finale
-
 def build_fhir_patient_json(df):
     """
     FHIR simplifié.
